@@ -1,0 +1,128 @@
+#this script will run EP-IS, following Barthelme and Chopin, for a simple example:
+#standard neutral model with recombination, so 2 parameters theta and rho.
+#because the possible values for theta and rho are bounded by zero, and since 
+#everything is assuming a Gaussian distribution (posteriors and priors) it seems 
+#natural to work on the log scale (natural logs rather than log10). 
+
+#the 'cavity distribution' can be thought of as the estimate of the prior for a particular locus,
+#when using all the other data. 
+
+#Initialise things:
+Niter = 20 #this is the number of sweeps through the loci 
+Npara = 3 #log(theta), log(R), log(tf), 
+
+Nloci = 10 #in this example (but the file contains 100)
+#check this is not greater than number in simulated set
+if(Nloci > nsim_loci)stop("Nloci > nsim_loci")
+nisamp = 100
+numnit = 1000 #number of IS simulations
+#we build up the posterior for theta and rho by initially starting with the prior then 
+#getting the posterior for one locus, then using this as the prior for the next locus
+#etc. We then refine the posterior in the subsequent sweeps through the data. 
+#first we set the natural parameters all to be zero. This is equivalent to infinite variance
+#This is OK, because then the only info comes from the prior, and we build things up
+#sequentially from there. 
+
+#set priors. 
+
+Prior.sigmainv = diag(Npara)*(1/6.0) #should be vague enough for growth
+Prior.sigmainv.mu = rep(0,Npara) #centre it around nothing very interesting
+
+
+guess.mu = c(logtheta,logR,logtf)
+#guess.sigma = matrix(c(0.04^2,-0.31*0.04*0.2,-0.7*0.04*0.14,-0.31*0.04*0.2,0.2^2,0.78*0.2*0.14,-0.7*0.04*0.14,0.78*0.2*0.14,0.14^2),ncol=3)
+guess.sigma = matrix(c(1,0,0,0,1,0,0,0,1),ncol=3)
+SigmaInv.sum = chol2inv(chol(guess.sigma))
+SigmaInv.mu.sum = guess.mu%*%SigmaInv.sum
+
+SigmaInv.sum = SigmaInv.sum - Prior.sigmainv
+SigmaInv.mu.sum = SigmaInv.mu.sum - Prior.sigmainv.mu
+
+#SigmaInv.mu.sum = rep(0,Npara) #this is going to be the mean for posterior distribution (minus the prior) of 
+                               #rho and theta divided by the covariance matrix.
+#SigmaInv.sum = diag(Npara)*0 #this is going to be the inverse of the covariance matrix of the posterior
+                              #(minus the prior) for rho and theta
+
+# output contains the vector of posterior means, the vector
+# of posterior standard deviations, and the correlation coefficients
+output = matrix(nrow=Niter,ncol=Npara + Npara*(Npara+1)/2 )
+
+abctable = NULL
+icount = 1
+for(iter in 1:Niter){ #a sweep through the loci
+	for(ilocus in 1:Nloci){ #goes locus by locus
+		# Compute the parameters of the cavity distribution. This
+		# is not standard for EP - I am using what Barthelme and Dehaene term average EP. 
+		# In normal EP, each locus has its own posterior approximation - the overall posterior distribution is 
+		# given as the product of a set of multivariate normals, one for each locus. The parameters of this
+		# distribution is simply the sum of the natural parameters for each locus-specific distribution. So
+		# in standard EP we create the cavity distribution for a particular locus by taking the natural parameters
+		# for the current approximation to the posterior (without the prior) (i.e. SigmaInv.mu.sum and SigmaInv.sum) and subtract out
+		# the natural parameter values for the current locus. Below, instead, what we are implicitly assuming is
+		# that each locus contributes equally to the posterior, so we can obtain the natural parameter for the 
+		# cavity distribution by multiplying the current posterior (without prior) by (Nloci -1)/Nloci. This has significant advantages
+		# when we are getting noisy estimates for the mean and covariance because otherwise sometimes we can get negative
+		# natural parameters (not allowed) for the locus specific posterior approximation. 
+		# BTW The '(without the prior)' term in the explanations refers to the fact that I keep the prior natural paramters
+		# separate in the average-EP calculation, and just put them in when we are computing the cavity distribution and 
+		# in presenting the final results. 
+						
+		SigmaInv.mu.cav = (Nloci-1)/Nloci*SigmaInv.mu.sum + Prior.sigmainv.mu
+		SigmaInv.cav = (Nloci-1)/Nloci*SigmaInv.sum + Prior.sigmainv
+		
+		#use simulation to get moments of the tilted distribution need to do this because the multivariate normal simulator
+		# needs the standard parameters rather than the natural parameters. (Of course, could do this in the abc function)
+		sigma.cav = chol2inv(chol(SigmaInv.cav))
+		
+		
+		mu.cav = sigma.cav%*%as.vector(SigmaInv.mu.cav) 
+		
+		target = paste("genetree/gtree_file",ilocus,sep="")
+		
+		simres = ismoments(target,sigma.cav,as.numeric(mu.cav),numnit,nisamp) #this is because rmnorm() 
+		                                                                           #doesn't like a matrix mu.cav
+		SigmaInv.mu.sum = simres$sigmainv.mu - Prior.sigmainv.mu #remove the prior again (see note above)
+		SigmaInv.sum = simres$sigmainv - Prior.sigmainv
+		#print(paste("iteration",iter,"locus",ilocus,"ess",simres$ess))
+		#print(SigmaInv.mu.sum)
+		#print(SigmaInv.sum)
+		#print(simres$ess)
+		icount = icount + 1
+		
+		#this bit is for detailed reporting for each mainiter, iter, and ilocus of the evolution of the posterior
+		#
+		sigmat = simres$sigma 
+		muvec = simres$mu
+		sdev = sqrt(diag(sigmat)) #standard deviation
+		smat = diag(1/sdev)
+		corrmat = smat%*%sigmat%*%smat #gets correlation matrix rather than covariance (easier to visualise)
+		index1 = upper.tri(corrmat)
+		report1 = c(muvec,sdev,corrmat[index1]) #just reports this as a row of output (note the correlation matrix is flattened)
+		
+		if(report_counter==1){
+			write(c(mainiter,iter,ilocus,simres$ess,simres$pss,report1),file="postevol.txt",ncol=length(report1)+5,append=F)
+		}else{
+			write(c(mainiter,iter,ilocus,simres$ess,simres$pss,report1),file="postevol.txt",ncol=length(report1)+5,append=T)
+		}
+		report_counter = report_counter + 1
+		if(iter == 2 && ilocus == 1)stop("test break")
+			
+	}
+	sigmat = chol2inv(chol(SigmaInv.sum + Prior.sigmainv)) #note now put prior back in for reporting the results of this sweep
+	muvec = as.numeric(sigmat%*%(SigmaInv.mu.sum + Prior.sigmainv.mu)) #convert back to standard parameters (mean and covariance)
+	sdev = sqrt(diag(sigmat)) #standard deviation
+	smat = diag(1/sdev)
+	corrmat = smat%*%sigmat%*%smat #gets correlation matrix rather than covariance (easier to visualise)
+	index1 = upper.tri(corrmat)
+	
+	
+	output[iter,] = c(muvec,sdev,corrmat[index1]) #just reports this as a row of output (note the correlation matrix is flattened)
+	#print(output[iter,])
+	
+}
+#finally report the mean of the last half set of iterations.
+final.out = apply(output[c((ceiling(0.5*Niter)):Niter),],2,mean)
+
+
+
+

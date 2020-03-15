@@ -1,0 +1,356 @@
+---
+title: "Gaussian Expectation Propagation"
+output: html_document
+---
+\newcommand{\vect}[1]{\boldsymbol{\mathbf{#1}}}
+\newcommand{\nc}[2]{\newcommand{#1}{#2}}
+\nc{\vx}{\vect{x}}
+\nc{\vmu}{\vect{\mu}}
+\nc{\vSigma}{\vect{\Sigma}}
+\nc{\vtheta}{\vect{\theta}}
+\nc{\vr}{\vect{r}}
+\nc{\vQ}{\vect{Q}}
+\nc{\vgamma}{\vect{\gamma}}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(emdbook)
+library(mcmc)
+library(MASS)
+```
+
+# Random-Walk Metropoli Hastings Implementation
+```{r}
+rwmh_log <- function(start, niter, logtarget, Sigma=NULL){
+    # Starting Points and Their Density
+    z <- start
+    pz <- logtarget(z)
+    # grab the dimensionality of z
+    if (is.null(nrow(z))){
+      d <- length(z)
+    } else {
+      d <- nrow(z)
+    }
+    # Store Samples
+    samples <- matrix(0, nrow=niter, ncol=d)
+    samples[1, ] <- z
+    # Uniform Random Numbers
+    log_u <- log(runif(niter))
+    # Proposal: Normal Distribution
+    if (is.null(Sigma)){
+      Sigma <- diag(d)
+    }
+    normal_shift <- mvrnorm(n=niter, mu=rep(0, d), Sigma=Sigma)
+    for (i in 2:niter){
+        # Sample Candidates
+        candidate <- z + normal_shift[i, ]
+        # Candidate Densities
+        p_candidate <- logtarget(candidate)
+        # Accept/Reject for Chain 1
+        if (log_u[i] <= p_candidate - pz){
+          z <- candidate
+          pz <- p_candidate
+        }
+        # Store samples
+        samples[i, ] <- z
+    }
+    return(samples)
+}
+```
+
+# Initialization of EP
+First, we converts $\vmu_0$ and $\vSigma_0$, the moment parameters of the prior distribution, into natural parameters using the function `moment2natural()` 
+```{r}
+moment2natural <- function(mu, Sigma){
+  Q <- chol2inv(chol(Sigma)) #solve(Sigma) # chol2inv(chol(Sigma)) might be better, but seems less stable?
+  r <- Q %*% mu
+  return(list(r=r, Q=Q))
+}
+```
+which essentially computes
+$$
+\begin{align}
+\vQ_0 &\leftarrow \vSigma_0^{-1} \\
+\vr_0 &\leftarrow \vQ_0 \vmu_0
+\end{align}
+$$
+Next, it sets the **global** _natural_ parameters to the prior natural parameters
+$$
+\begin{align}
+\vQ &\leftarrow \vQ_0 \\
+\vr &\leftarrow \vr_0
+\end{align}
+$$
+And it sets the **global** _moment_ parameters to the prior moment parameters.
+$$
+\begin{align}
+\vmu &\leftarrow \vmu_0 \\
+\vSigma &\leftarrow \vSigma_0
+\end{align}
+$$
+Finally, we set $\vr_k$ and $\vQ_k$ in each site $k=1, \ldots, \texttt{nsites}$ to be zeros. That is
+$$
+\vr_k = \begin{pmatrix}
+0 \\
+\vdots \\
+0 
+\end{pmatrix}\in\mathbb{R}^{\texttt{nparams}\times 1} \qquad \text{and} \qquad \vQ_k = \begin{pmatrix} 0 & \cdots & 0 \\ \vdots & \ddots & \vdots \\ 0 & \cdots & 0 \end{pmatrix}\in\mathbb{R}^{\texttt{nparams}\times \texttt{nparams}}
+$$
+
+```{r}
+initialize_ep <- function(nsites, mu_prior, Sigma_prior){
+  # Find dimensionality of parameters
+  nparams <- nrow(Sigma_prior)
+  # Convert mu_0 and Sigma_0 to their natural parameter versions
+  natural_prior <- moment2natural(mu_prior, Sigma_prior)
+  
+  ep <- list(
+    r=natural_prior$r, # Set global r and global Q to r_prior and q_prior. 
+    Q=natural_prior$Q,
+    mu=mu_prior,       # Set global mu and Sigma to mu_prior and Sigma_prior
+    Sigma=Sigma_prior,
+    r_list=array(0, dim=c(nparams, 1, nsites)),  # Store arrays containing r_i and Q_i for every site
+    Q_list=array(0, dim=c(nparams, nparams, nsites))
+  )
+  return(ep)
+}
+```
+
+# Site Update
+The site update at site $\texttt{site_index}$ is mainly performed by the function `site_update`, shown below.
+
+```{r}
+site_update <- function(ep, site_index, pass_index, nsamples, local_likelihood){
+  # Compute mu, Sigma of cavity distribution
+  moment_cavity <- moments_cavity(ep, site_index)
+  Sigma_c <- moment_cavity$Sigma
+  mu_c    <- moment_cavity$mu
+  # Check for positive definiteness of Sigma, otherwise, skip this
+  if (is_positive_definite(Sigma_c)){
+    # By sampling tilted, find new global natural parameters
+    rq_new <- sample_moments_tilted(site_index, local_likelihood, mu_c, Sigma_c, nsamples)
+    # Find new local natural parameters by subtracting natural params of cavity distribution
+    r_i_new <- rq_new$r - ep$r + matrix(ep$r_list[,,site_index])
+    q_i_new <- rq_new$Q - ep$Q + ep$Q_list[,,site_index]
+    # Update EP local parameters
+    # Return the new local natural parameter so we can do updates in a parallel fashion
+    return(list(r_i=r_i_new, 
+                q_i=q_i_new))
+  } else {
+    cat("Skipping site", site_index, "in pass", pass_index, "as Sigma of Cavity is not positive definite.\n")
+    #TODO: Do we keep the old ones, or pass empty ones?
+    return(list(
+      r_i = matrix(ep$r_list[,,site_index]),
+      q_i = ep$Q_list[,,site_index]
+    ))
+  }
+}
+```
+
+### Moment Parameters of Cavity Distribution
+It starts by calculating the **moment** parameters of the cavity distribution using the function `moments_cavity`, which takes an `ep` object, a site index and it outputs a list containing the **moment** parameters
+
+```{r}
+moments_cavity <- function(ep, site_index){
+  # Subtract Q_i from Q_global, and r_i from r_global to find natural parameters
+  # of cavity distribution
+  Q_c <- ep$Q - ep$Q_list[,,site_index]
+  r_c <- ep$r - matrix(ep$r_list[,,site_index])
+  moment_cavity <- natural2moment(r_c, Q_c)
+  return(list(mu_c=moment_cavity$mu, 
+              Sigma_c=moment_cavity$Sigma))
+}
+```
+
+These are calculated by subtracting the natural parameters of the $\texttt{site_index}^{\text{th}}$ approximation term from the current global natural parameters
+$$
+\begin{align}
+\vQ_{c} &\leftarrow \vQ - \vQ_k \\
+\vr_{c} &\leftarrow \vr - \vr_k
+\end{align}
+$$
+and then the natural parameters are converted to moment parameters using the function `natural2moment()`
+```{r}
+natural2moment <- function(r, Q){
+  Sigma <- chol2inv(chol(Q)) #solve(Q) #chol2inv(chol(Q))
+  mu <- Sigma %*% r
+  return(list(mu=mu, Sigma=Sigma))
+}
+```
+using the formulas
+$$
+\begin{align}
+\vSigma_c &\leftarrow \vQ_c^{-1} \\
+\vmu_c &\leftarrow \vSigma_c \vr_c
+\end{align}
+$$
+
+### Moment-Matching
+After checking that $\vSigma_c$ is positive definite by looking at its eigenvalues
+```{r}
+is_positive_definite <- function(Sigma, tol=1e-8){
+  # Compute eigenvalues
+  eigenvalues <- eigen(Sigma, only.values = TRUE)$values
+  # If smaller then threshold, set to zero
+  eigenvalues[abs(eigenvalues) < tol] <- 0.0
+  # If any is <= 0 then it's not positive definite
+  return(ifelse(any(eigenvalues <= 0), FALSE, TRUE))
+}
+```
+we proceed by getting **sample estimates** of the moment parameters using the function `sample_moments_tilted`
+```{r}
+sample_moments_tilted <- function(site_index, local_likelihood, mu_c, Sigma_c, nsamples){
+  # Create wrapper for tilted distribution. Will be used to sample from it
+  target <- function(x) local_likelihood(x) * dmvnorm(x, c(mu_c), Sigma_c)
+  # Sample from the targe distribution. First, find the mode and start sampling from there
+  sol <- optim(rep(0, nrow(Sigma_c)), function(x) -log(target(x)), method="BFGS", hessian=TRUE)
+  samples <- metrop(function(x) log(target(x)), sol$par, nbatch=nsamples)$batch
+  # Compute mean and covariance of the samples, assign them to the new global moment parameters
+  mu_global_new    <- matrix(apply(samples, 2, mean))
+  Sigma_global_new <- cov(samples)
+  # Convert new global moment parameters to natural parameters
+  natural_global_new <- moment2natural(mu_global_new, Sigma_global_new)
+  return(list(Q=natural_global_new$Q, r=natural_global_new$r))
+}
+```
+This function samples $\widetilde{\boldsymbol{\mathbf{\gamma}}}_k^{(1)}, \ldots, \widetilde{\boldsymbol{\mathbf{\gamma}}}_k^{(N)}$ from
+$$
+f_k(\vx; \vgamma_k) \,\mathcal{N}(\vx; \vmu_c, \vSigma_c)
+$$
+using the Random-Walk Metropolis-Hastings algorithm provided by the `mcmc` package. We start the algorithm at the mode of the tilted distribution, which is found with `optim()` on minus the negative logarithm of the tilted distribution.
+
+Once we've obtained the samples we calculate their mean and their variance-coviariance matrix. We take these sample estimates as the new global moment parameters
+$$
+\begin{align}
+\boldsymbol{\mathbf{\mu}}^{\text{new}, k}&\leftarrow \frac{1}{N}\sum_{j=1}^N \widetilde{\boldsymbol{\mathbf{\gamma}}}_i^{(j)} \\
+\boldsymbol{\mathbf{\Sigma}}^{\text{new}, k} &\leftarrow \frac{1}{N - 1}\sum_{j=1}^N \left(\widetilde{\boldsymbol{\mathbf{\gamma}}}_i^{(j)} - \boldsymbol{\mathbf{\mu}}^{\text{new}, k}\right) \left(\widetilde{\boldsymbol{\mathbf{\gamma}}}_i^{(j)} - \boldsymbol{\mathbf{\mu}}^{\text{new}, k}\right)^\top
+\end{align}
+$$
+Finally, we convert these to natural parameters for the global approximation using `moment2natural()` as before.
+$$
+\begin{align}
+\boldsymbol{\mathbf{Q}}^{\text{new}, k} &\leftarrow \left(\boldsymbol{\mathbf{\Sigma}}^{\text{new}, k}\right)^{-1} \\
+\boldsymbol{\mathbf{r}}^{\text{new}, k} &\leftarrow \boldsymbol{\mathbf{Q}}^{\text{new}, k} \boldsymbol{\mathbf{\mu}}^{\text{new}, k}
+\end{align}
+$$
+
+### Finding the New Site Natural Parameters
+The last step is to subtract the cavity parameters from the newly-found global natural parameters using the formulas
+$$
+\begin{align}
+\vr_k^{\text{new}} &\longleftarrow \vr^{\text{new}, k} - \vr_c = \vr^{\text{new}, k} - (\vr - \vr_k) = \vr^{\text{new}, k} - \vr  +\vr_k \\
+\vQ_k^{\text{new}} &\longleftarrow \vQ^{\text{new}, k} - \vQ_c= \vQ^{\text{new}, k} - (\vQ - \vQ_k) = \vQ^{\text{new}, k}  - \vQ + \vQ_k
+\end{align}
+$$
+
+### In case Cavity Variance-Covariance Matrix is not Positive Definite
+If the variance coviariance matrix of the cavity distribution, $\vSigma_c$, is not positive definite then we cannot sample from the tilted distribution, because the cavity is undefined. In that case we simply set the new natural local parameters to be the same as before
+$$
+\begin{align}
+\vr^{\text{new}}_k &\leftarrow \vr_k \\
+\vQ^{\text{new}}_k &\leftarrow \vQ_k
+\end{align}
+$$
+
+# Main Expectation Propagation Algorithm
+### Summary of the Algorithm
+The algorithm proceeds as follows
+
+1. Initializes the parameters as seen above.
+2. Cycles through $\texttt{npasses}$ passes. Each pass is an update to _every_ site, where it computes the update as seen before.
+3. After updating all the sites and having obtained $\vr_1^{\text{new}},\ldots, \vr_{\texttt{nsites}}^{\text{new}}$ and $\vQ_1^{\text{new}}, \ldots, \vQ_{\texttt{nsites}}^{\text{new}}$ we obtain the new global natural parameters by summing all the new local natural parameters
+$$
+\begin{align}
+\vQ^{\text{new}} &\leftarrow \sum_{k=1}^{\texttt{npasses}} \vQ_k^{\text{new}} \\
+\vr^{\text{new}} &\leftarrow \sum_{k=1}^{\texttt{npasses}} \vr_k^{\text{new}}
+\end{align}
+$$
+
+and finally it updates the values of the local natural parameters stored in the `ep` object.
+
+### Damping for Stability
+Having obtained $\vr^{\text{new}}$ and $\vQ^{\text{new}}$ we can use a damping factor $\alpha$, which is set to $\alpha=1.0$ if we wish to not use it, to slow down convergence while at the same time improving stability. Damping is performed as
+$$
+\begin{align}
+\vQ^{\text{new, damped}} &\leftarrow \alpha\vQ^{\text{new}} + (1 - \alpha)\vQ \\
+\vr^{\text{new, damped}} &\leftarrow \alpha\vQ^{\text{new}} + (1 - \alpha)\vr
+\end{align}
+$$
+At the end, we simply convert the global natural parameters to the moment ones.
+
+```{r}
+ep_algorithm <- function(nsites, nparams, nsamples, npasses, mu_prior, Sigma_prior, local_likelihood, alpha=1.0){
+  # Store history
+  history_mu <- array(0, dim=c(nparams, 1, npasses))
+  history_Sigma <- array(0, dim=c(nparams, nparams, npasses))
+  # Store prior natural parameters, arrays of Q_i and r_i, global Q and r
+  ep <- initialize_ep(nsites, mu_prior, Sigma_prior)
+  # Each pass computes updates in parallel
+  for (pass_index in 1:npasses){
+    cat("Pass", pass_index,": Global r is\n", ep$r, "\nGlobal Q is\n", ep$Q, "\n")
+    # Create a wrapper function so that we can use mclapply
+    site_update_wrapper <- function(site_index){
+      return(site_update(ep, site_index, pass_index, nsamples, local_likelihood))
+    }
+    # Find (mu, Sigma) of cavity distribution, construct tilted, sample from it 
+    # and convert moment parameters to natural parameters.
+    updates <- list()
+    for (site in 1:nsites){
+      updates[[site]] <- site_update_wrapper(site)
+    }
+    # Sum up all the updates and update ep local natural parameters
+    r_new <- 0.0
+    Q_new <- 0.0
+    for (site in 1:nsites){
+      ep$r_list[,,site] <- updates[[site]]$r_i
+      ep$Q_list[,,site] <- updates[[site]]$q_i
+      r_new <- r_new + updates[[site]]$r_i
+      Q_new <- Q_new + updates[[site]]$q_i
+    }
+    # Update the global parameters with some damping 
+    ep$r <- alpha*r_new + (1 - alpha)*(ep$r)
+    ep$Q <- alpha*Q_new + (1 - alpha)*(ep$Q)
+    # Update the global mu and Sigma
+    global_moments <- natural2moment(ep$r, ep$Q)
+    ep$mu <- global_moments$mu
+    ep$Sigma <- global_moments$Sigma
+    # Store history 
+    history_mu[,,pass_index] <- ep$mu
+    history_Sigma[,,pass_index] <- ep$Sigma
+  }
+  return(list(ep=ep, history_mu=history_mu, history_Sigma=history_Sigma))
+}
+```
+
+
+# Example
+Use a normal likelihood
+```{r}
+local_likelihood <- function(x){
+  return(dmvnorm(x, mu=c(1,1), Sigma=diag(2)))
+}
+```
+Specify settings here
+```{r}
+nsites <- 20
+nparams <- 2
+nsamples <- 1000
+npasses <- 50
+mu_prior <- matrix(c(0,0))
+Sigma_prior <- diag(2)
+alpha <- 0.02    #0.01
+```
+Run algorithm
+```{r, echo=FALSE}
+a <- ep_algorithm(nsites, nparams, nsamples, npasses, mu_prior, Sigma_prior, local_likelihood, alpha=alpha)
+```
+
+Plot stuff
+```{r}
+mus <- data.frame(matrix(c(a$history_mu), ncol=2, byrow=TRUE), 1:npasses)
+ggplot(data=mus) + geom_point(aes(x=X1, y=X2, color=as.factor(X1.npasses)))
+```
+
