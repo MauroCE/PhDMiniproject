@@ -73,13 +73,13 @@ sample_moments_tilted <- function(site_index, local_likelihood, mu_c, Sigma_c, n
     # log_cavity <- as.double(-0.5 * theta %*% (Q_c %*% theta) + t(r_c) %*% theta)
     log_cavity <- dmvnorm(theta, c(mu_c), Sigma_c, log=TRUE)
     # Evaluate log Local Likelihood at the data contained at site `site_index`, given r_c and Q_c
-    log_likelihood <- local_likelihood(site_index, sigma=moment_cavity$Sigma, mu=c(moment_cavity$mu))
+    log_likelihood <- local_likelihood(site_index, sigma=Sigma_c, mu=c(mu_c))
     # Sum them log_cavity and log_likelihood to obtain log_tilted
     # Compute Cavity Distribution Estimate
     return(log_likelihood + log_cavity)
   }
   # Sample from the targe distribution. First, find the mode and start sampling from there
-  sol <- optim(c(moment_cavity$mu), function(x) -log_tilted(x), method="BFGS", hessian=TRUE)
+  sol <- optim(c(mu_c), function(x) -log_tilted(x), method="BFGS", hessian=TRUE)
   inv_hessian <- chol2inv(chol(sol$hessian))
   samples <- rwmh(start=sol$par, niter=nsamples, logtarget=log_tilted, Sigma=inv_hessian)
   # Compute mean and covariance of the samples, assign them to the new global moment parameters
@@ -202,7 +202,7 @@ local_likelihood <- function(site_index, sigma, mu, isss=1000){
 # Settings
 nsites <- 5
 nsamples <- 500
-npasses <- 10
+npasses <- 20
 mu_prior <- matrix(c(0,0,0))
 Sigma_prior <- diag(3)
 nparams <- nrow(Sigma_prior)
