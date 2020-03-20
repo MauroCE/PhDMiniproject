@@ -1,11 +1,22 @@
 library(emdbook)   # For dmvnorm
 library(MASS)      # For mvrnorm
 library(parallel)  # For mclapply
-# library(lgarch)    # For rmnorm
-library(mnormt)    # For dmnorm, rmnorm
+library(plotly)    # For interactive plots
+# library(lgarch)    # For rmnorm, old
+# library(mnormt)    # For dmnorm, rmnorm
+
+# Function that inverts a matrix. If it is not possible, then it "logs" it using try
+invert_matrix_check <- function(matrix){
+  inverse <- try(solve(matrix), silent=TRUE)
+  return(list(inverse=inverse, invertible=class(inverse)=="matrix"))
+}
 
 # Checks for positive definiteness
-is_positive_definite <- function(Sigma, tol=1e-8){
+is_positive_definite <- function(Sigma, tol=1e-10){
+  # Positive definite matrices need to be symmetric
+  if (!isSymmetric.matrix(Sigma)){
+    return(FALSE) # If it's not symmetric, cant be positive definite
+  }
   # Compute eigenvalues
   eigenvalues <- eigen(Sigma, only.values = TRUE)$values
   # If smaller then threshold, set to zero
@@ -79,7 +90,7 @@ sample_moments_tilted <- function(site_index, local_likelihood, mu_c, Sigma_c, n
     return(log_likelihood + log_cavity)
   }
   # Sample from the targe distribution. First, find the mode and start sampling from there
-  sol <- optim(c(mu_c), function(x) -log_tilted(x), method="BFGS", hessian=TRUE)
+  sol <- optim(c(mu_c), function(theta) -log_tilted(theta), method="BFGS", hessian=TRUE)
   inv_hessian <- chol2inv(chol(sol$hessian))
   samples <- rwmh(start=sol$par, niter=nsamples, logtarget=log_tilted, Sigma=inv_hessian)
   # Compute mean and covariance of the samples, assign them to the new global moment parameters
@@ -96,10 +107,20 @@ site_update <- function(ep, site_index, pass_index, nsamples, local_likelihood){
   Q_c <- ep$Q - ep$Q_list[,,site_index]
   r_c <- ep$r - matrix(ep$r_list[,,site_index])
   # Compute moment parameters to see whether to skip this site update
-  moment_cavity <- natural2moment(r_c, Q_c)
-  if (is_positive_definite(moment_cavity$Sigma)){
+  # moment_cavity <- natural2moment(r_c, Q_c)
+  # mu_c <- moment_cavity$mu
+  # Sigma_c <- moment_cavity$Sigma
+  inversion <- invert_matrix_check(Q_c)
+  if (!inversion$invertible){
+    return(list(r_i=matrix(0, nrow=nparams, ncol=1),
+                q_i=matrix(0, nrow=nparams, ncol=nparams)))
+  }
+  Sigma_c <- inversion$inverse
+  mu_c    <- Sigma_c %*% r_c
+  # Only sample from tilted if Sigma of cavity distribution is positive definite
+  if (is_positive_definite(Sigma_c)){
     # By sampling tilted, find new global natural parameters
-    rq_new <- sample_moments_tilted(site_index, local_likelihood, moment_cavity$mu, moment_cavity$Sigma, nsamples)
+    rq_new <- sample_moments_tilted(site_index, local_likelihood, mu_c, Sigma_c, nsamples)
     # Find new local natural parameters by subtracting natural params of cavity distribution
     r_i_new <- rq_new$r - ep$r + matrix(ep$r_list[,,site_index])
     q_i_new <- rq_new$Q - ep$Q + ep$Q_list[,,site_index]
@@ -185,10 +206,10 @@ local_likelihood <- function(site_index, sigma, mu, isss=1000){
   # simulate from widened cavity distribution (acts as a prior). Could use lgarch::rmnorm
   trans.sigma <-  sigma
   diag(trans.sigma) <-  2*diag(trans.sigma)
-  params = mnormt::rmnorm(n=1, mean = mu, varcov = trans.sigma) 
+  params = MASS::mvrnorm(n=1, mu=mu, Sigma=trans.sigma)
   # use a widened distribution to improve stability
   # correct it below in simwt
-  simwt = mnormt::dmnorm(params,mean=mu,varcov=sigma) / mnormt::dmnorm(params,mean=mu,varcov=trans.sigma)
+  simwt = dmvnorm(params, mu=mu, Sigma=sigma) / dmvnorm(params, mu=mu, Sigma=trans.sigma)
   write(t(params),paramfile,ncol=nparams)
   use_ms_tf_scaling=T #see runnit.r for explanation
   cm1 = paste("./is_moments_new",target,as.integer(1),as.integer(isss),paramfile,as.integer(use_ms_tf_scaling))
@@ -200,21 +221,21 @@ local_likelihood <- function(site_index, sigma, mu, isss=1000){
 
 
 # Settings
-nsites <- 5
+nparams <- 3  # dimensionality of the parameter. In this case phi = (theta, logr, tf) so nparams=3.
+nsites <- 10
 nsamples <- 500
 npasses <- 20
-mu_prior <- matrix(c(0,0,0))
-Sigma_prior <- diag(3)
-nparams <- nrow(Sigma_prior)
+mu_prior <- matrix(rep(0, nparams))
+Sigma_prior <- diag(nparams)
 # For Likelihood
-alpha <- 0.2
+alpha <- 1.0
 
 # Run Algorithm
 a <- ep_algorithm(nsites, nparams, nsamples, npasses, 
                   mu_prior, Sigma_prior, local_likelihood, alpha)
 
 
-# After its done, to look at the history
+# After its done, find history for mu and Sigma
 history_mu    <- array(0, dim=c(nparams, 1, npasses))
 history_Sigma <- array(0, dim=c(nparams, nparams, npasses))
 for (i in 1:npasses){
@@ -222,3 +243,15 @@ for (i in 1:npasses){
   history_mu[,,i] <- natural$mu
   history_Sigma[,,i] <- natural$Sigma
 }
+
+# Now compute norms? To check if it is converging or not
+mu_diff    <- sapply(1:(npasses-1), function(i) sum((history_mu[,,i] - history_mu[,,i+1])^2))
+Sigma_diff <- sapply(1:(npasses-1), function(i) norm(history_Sigma[,,i] - history_Sigma[,,i+1], type="F"))
+
+# Construct a dataframe, so that we can plot it
+index <- 1:npasses
+stacked_mus <- data.frame(x=matrix(history_mu[1,,]), 
+                          y=matrix(history_mu[2,,]), 
+                          z=matrix(history_mu[3,,]))
+plot_ly(x=stacked_mus[, 1], y=stacked_mus[,2], z=stacked_mus[, 3], type="scatter3d", mode="markers", color=index)
+
