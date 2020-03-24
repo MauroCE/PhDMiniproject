@@ -107,16 +107,16 @@ site_update <- function(ep, site_index, pass_index, nsamples, local_likelihood){
   Q_c <- ep$Q - ep$Q_list[,,site_index]
   r_c <- ep$r - matrix(ep$r_list[,,site_index])
   # Compute moment parameters to see whether to skip this site update
-  # moment_cavity <- natural2moment(r_c, Q_c)
-  # mu_c <- moment_cavity$mu
-  # Sigma_c <- moment_cavity$Sigma
-  inversion <- invert_matrix_check(Q_c)
-  if (!inversion$invertible){
-    return(list(r_i=matrix(0, nrow=nparams, ncol=1),
-                q_i=matrix(0, nrow=nparams, ncol=nparams)))
-  }
-  Sigma_c <- inversion$inverse
-  mu_c    <- Sigma_c %*% r_c
+  moment_cavity <- natural2moment(r_c, Q_c)
+  mu_c <- moment_cavity$mu
+  Sigma_c <- moment_cavity$Sigma
+  # inversion <- invert_matrix_check(Q_c)
+  # if (!inversion$invertible){   # If Q_c is not invertible, then simply don't update anything
+  #   return(list(r_i=matrix(0, nrow=nparams, ncol=1),
+  #               q_i=matrix(0, nrow=nparams, ncol=nparams)))
+  # }
+  # Sigma_c <- inversion$inverse
+  # mu_c    <- Sigma_c %*% r_c
   # Only sample from tilted if Sigma of cavity distribution is positive definite
   if (is_positive_definite(Sigma_c)){
     # By sampling tilted, find new global natural parameters
@@ -223,12 +223,12 @@ local_likelihood <- function(site_index, sigma, mu, isss=1000){
 # Settings
 nparams <- 3  # dimensionality of the parameter. In this case phi = (theta, logr, tf) so nparams=3.
 nsites <- 10
-nsamples <- 500
+nsamples <- 5000
 npasses <- 20
 mu_prior <- matrix(rep(0, nparams))
 Sigma_prior <- diag(nparams)
 # For Likelihood
-alpha <- 1.0
+alpha <- 0.5
 
 # Run Algorithm
 a <- ep_algorithm(nsites, nparams, nsamples, npasses, 
