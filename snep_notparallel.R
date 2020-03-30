@@ -1,24 +1,29 @@
+library(ggplot2)
+library(tidyr)
 ### MAIN ALGORITHM
 # t: Total number of iterations
-snep_async <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma_local, betas, like, t,
-                 epsilon, convergence=FALSE, tol=1e-6, maxiter=10000){
+snep_async <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma_local, betas, like,
+                 epsilon, t=100, convergence=FALSE, tol=1e-6, maxiter=100){
   # Dimensionality of parameter 
   d <- nrow(Sigma_prior)
   # Steps: 2 to 5
   theta_0  <- to_natural(mu_prior, Sigma_prior)    # Natural parameter of prior distribution
   lambda_i <- to_natural(mu_local, Sigma_local)    # Natural parameter of local approximation
   gamma_i  <- to_mean(mu_local, Sigma_local)       # Mean parameter of local approximation
-  theta_c  <- theta_0 + (nworkers - 1)*lambda_i      # Natural parameter of tilted distribution
-  theta_p  <- theta_c + lambda_i                   # Auxiliary Parameter: Natural parameter of global approximation?
+  theta_c  <- theta_0 + (nworkers - 1)*lambda_i      # Natural parameter of cavity distribution
+  theta_p  <- theta_c + lambda_i                   # Auxiliary Parameter: Natural parameter of local global approximation
   # Sample start from a MVN with mean, vcov given by auxiliary parameter
   Sigma_p <- solve(-2*matrix(theta_p[(d+1):(d^2+d), ], nrow=d))
   mu_p    <- Sigma_p %*% matrix(theta_p[1:d, ], ncol=1)
   starts <- mvrnorm(n=nworkers, mu = mu_p, Sigma = Sigma_p)
   # Initialize the server (call it theta_posterior cause it's the on ly field that matters)
-  theta_posterior <-  theta_0 + nworkers*lambda_i
+  theta_posterior <-  theta_0 + nworkers*lambda_i    # This should be equal to theta_p actually
   # Initialize workers
   workers <- list()
   for (i in 1:nworkers){
+    # Store the starting x_i in the history of samples
+    x_history      <- matrix(0.0, nrow=max(t+1, maxiter+1), ncol=d)
+    x_history[1, ] <- starts[i, ]
     workers[[i]] <- list(x          = matrix(starts[i, ]),
                          gamma      = gamma_i,
                          lambda     = lambda_i,
@@ -27,12 +32,14 @@ snep_async <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local,
                          beta       = betas[i],
                          theta_c    = theta_c,
                          delta      = 0.0,              # Initialize the delta at zero
-                         i          = i)                # Index, used for likelihood
+                         i          = i,                # Index, used for likelihood
+                         x_history  = x_history
+                         )                
   }
   # Run workers SYNCHRONOUSLY
   if (!convergence){   # Based on provided number of iterations t
     for (iter in 1:t){
-      workers <- run_all_workers_once(workers)
+      workers <- run_all_workers_once(workers, iter)
       if (iter %% nouter == 0) {workers <- update_auxiliary(workers)}
       if (iter %% nsync  == 0) {
         comm <- communicate(workers, theta_posterior)
@@ -44,7 +51,7 @@ snep_async <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local,
     iter <- 1   # Keep track of iteration number anyways
     distance <- Inf
     while (distance > tol){
-      workers <- run_all_workers_once(workers)
+      workers <- run_all_workers_once(workers, iter)
       if (iter %% nouter == 0) {workers <- update_auxiliary(workers)}
       if (iter %% nsync  == 0) {
         comm <- communicate(workers, theta_posterior)
@@ -65,22 +72,25 @@ snep_async <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local,
 
 
 # RUN ALL WORKERS ONCE
-run_all_workers_once <- function(workers){
+run_all_workers_once <- function(workers, iter){
   for (j in 1:length(workers)){
     # Find mu and Sigma of cavity for every worker (used by likelihood)
     natural_c <- natural2mean(workers[[j]]$theta_c, d, returnMuSigma = TRUE)
     # Skip update if Sigma of cavity distribution is not positive definite
     if (!is_positive_definite(natural_c$Sigma)){
-      cat("Skipping worker", j, "as Sigma of cavity distribution is not positive definite.\n")
+      cat("Skipping worker", j, "at iteration", iter, "as Sigma of cavity distribution is not positive definite.\n")
       next
     }
     # Update state x_i
     log_tilted <- function(x){
       first  <- as.double(t(workers[[j]]$theta_p - (workers[[j]]$lambda / workers[[j]]$beta)) %*% s(x))
-      second <- (log(like(workers[[j]]$i, c(natural_c$mu), natural_c$Sigma)) / workers[[j]]$beta)
+      second <- log(like(workers[[j]]$i, c(natural_c$mu), natural_c$Sigma)) / workers[[j]]$beta
       return(first + second)
-    }  
-    workers[[j]]$x <- matrix(rwmh(start=workers[[j]]$x, niter=2, logtarget=log_tilted)[2, ])  # TODO: Which scale to use here?
+    }
+    # TODO: Which scale to use here?
+    x_i_new <- matrix(rwmh(start=workers[[j]]$x, niter=2, logtarget=log_tilted)[2, ]) 
+    workers[[j]]$x                   <- x_i_new
+    workers[[j]]$x_history[iter+1, ] <- x_i_new
     # Update gamma_i and lambda_i (mean and natural param of local approximation respectively)
     workers[[j]]$gamma  <- workers[[j]]$gamma + epsilon*(s(workers[[j]]$x) - natural2mean(workers[[j]]$theta_c + workers[[j]]$lambda, d))
     workers[[j]]$lambda <- mean2natural(workers[[j]]$gamma, d)
@@ -164,7 +174,7 @@ rwmh <- function(start, niter, logtarget, Sigma=NULL){
   log_u <- log(runif(niter))
   # Proposal: Normal Distribution
   if (is.null(Sigma)){
-    Sigma <- diag(d)
+    Sigma <- 5*diag(d)
   }
   normal_shift <- mvrnorm(n=niter, mu=rep(0, d), Sigma=Sigma)
   for (i in 2:niter){
@@ -212,17 +222,17 @@ like <- function(i, mu, sigma, isss=5000){    # w is a worker
 
 ### RUN EXAMPLE
 d           <- 3                           # Dimensionality of parameter space. Here 3 cause (logTheta, logR, logTf) 
-nworkers    <- 4
-nouter      <- 10
-nsync       <- 10
-t           <- 500
+nworkers    <- 2
+nouter      <- 8
+nsync       <- 8
+t           <- 200
 mu_prior    <- mu_local    <- matrix(rep(0, d))
 Sigma_prior <- Sigma_local <- diag(d)
 betas       <- rep(1/nworkers, nworkers)   # pSNEP
 epsilon     <- 0.02                        # learning rate
-convergence <- TRUE                        # Whether to stop algorithm based on number of iterations t or on convergence
-tol         <- 1e-11                        # Tolerance for checking convergence
-maxiter     <- 10000
+convergence <- FALSE                        # Whether to stop algorithm based on number of iterations t or on convergence
+tol         <- 1e-6                        # Tolerance for checking convergence
+maxiter     <- 1000
 out <- snep_async(nworkers=nworkers, 
                   nouter=nouter, 
                   nsync=nsync, 
@@ -240,3 +250,18 @@ out <- snep_async(nworkers=nworkers,
 
 exp(natural2mean(out$s, d, TRUE)$mu)
 exp(natural2mean(out$s, d, TRUE)$Sigma)
+
+
+# Prepare data from worker 1
+df1       <- data.frame(out$w[[1]]$x_history)
+df1$index <- 1:nrow(df1)
+df1$worker <- 1
+# Prepare data from worker 2
+df2 <- data.frame(out$w[[2]]$x_history)
+df2$index <- 1:nrow(df2)
+df2$worker <- 2
+# Melt together
+melt <- gather(rbind(df1, df2), "param_dimension", "trace", -index, -worker)
+ggplot(data=melt) +
+  geom_line(aes(x=index, y=trace)) +
+  facet_wrap(worker~param_dimension)
