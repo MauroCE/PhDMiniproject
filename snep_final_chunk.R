@@ -51,7 +51,7 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
   iter     <- 1
   distance <- sqrt(sum((workers[[1]]$delta)^2))
   while (distance > tol){
-    cat("Iteration: ", iter, " Distance: ", distance, " Mu: ", find_mu_from_natural(theta_posterior, d), "\n")
+    cat("Iteration: ", iter, " Distance: ", distance, " Mu: ", find_logmu_from_natural(theta_posterior, d), "\n")
     # RUN ALL WORKERS ONCE (SAMPLING + UPDATING GAMMA AND LAMBDA)
     for (j in 1:nworkers){
       natural_c <- natural2mean(workers[[j]]$theta_c, d, returnMuSigma = TRUE)  # mu, Sigma of cavity distribution
@@ -68,7 +68,7 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       # Log tilted distribution
       log_tilted <- function(x){
         return(as.double(t(tilted_param) %*% s(x)) + loglike(j, workers[[j]]$sites, c(x), pop=pop) / workers[[j]]$beta)
-      }   
+      }
       x_i_new <- matrix(rwmh(start=workers[[j]]$x, niter=2, logtarget=log_tilted)[2, ]) #TODO: Scale?
       workers[[j]]$x                   <- x_i_new
       workers[[j]]$x_history[iter+1, ] <- x_i_new
@@ -79,6 +79,9 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
     # UPDATE AUXILIARY PARAMETER  (Parallelized)
     if (iter %% nouter == 0) {
       update_auxiliary <- function(j){
+        old_muSigma    <- natural2mean(workers[[j]]$theta_p, d, T)
+        new_muSigma    <- natural2mean(workers[[j]]$theta_c + workers[[j]]$lambda, d, T)
+        workers[[j]]$x <- new_muSigma$mu + sqrt(diag(diag(new_muSigma$Sigma))) %*% solve(sqrt(diag(diag(old_muSigma$Sigma))), workers[[j]]$x - old_muSigma$mu)
         workers[[j]]$theta_p <- workers[[j]]$theta_c + workers[[j]]$lambda
         return(workers[[j]])
       } 
@@ -130,16 +133,19 @@ to_mean <- function(mu, Sigma){     # Transforms (mu, Sigma) into the mean param
 }
 natural2mean <- function(theta, d, returnMuSigma=FALSE){   # Transforms a complete natural parameter to mean parameter for Gaussian Approx
   Sigma <- -0.5*solve(matrix(theta[(d+1):(d+d^2), ], nrow=d))  # as (-2)^{-1} = -0.5
-  mu <- Sigma %*% matrix(theta[1:d, ])
+  mu <- Sigma %*% theta[1:d, ,drop=F]
   if (!returnMuSigma){
     return(to_mean(mu, Sigma))
   } else {
     return(list(mu=mu, Sigma=Sigma)) 
   }
 }
-find_mu_from_natural <- function(theta, d) solve(matrix(-2*theta[(d+1):(d+d^2), ], nrow=d), matrix(theta[1:d, ]))
+find_logmu_from_natural <- function(theta, d) {
+  mean_params <- natural2mean(theta, d, T)
+  return(exp(mean_params$mu + 0.5*matrix(diag(mean_params$Sigma))))
+}
 mean2natural <- function(nu, d){  # Given a (d + d^2) dimensional mean param, it returns its correponding natural param
-  mu    <- matrix(nu[1:d, ])
+  mu    <- nu[1:d, ,drop=F]
   Sigma <- matrix(nu[(d+1):(d+d^2), ], nrow=d) - tcrossprod(mu)
   return(to_natural(mu, Sigma))
 }
@@ -217,15 +223,15 @@ loglike <- function(worker_index, sites, params, isss=5000, pop="stable"){
 ### RUN EXAMPLE
 d           <- 3                                  # Number of parameters. Here 3 cause (logTheta, logR, logTf) 
 nworkers    <- 4                                  # Number of sites
-nouter      <- 10                                 # Number of iterations after which we update auxiliary parameter
-nsync       <- 10                                 # Number of iterations after which we communicate with the server
+nouter      <- 5                                 # Number of iterations after which we update auxiliary parameter
+nsync       <- 5                                 # Number of iterations after which we communicate with the server
 mu_prior    <- mu_local    <- matrix(rep(0, d))
 Sigma_prior <- Sigma_local <- diag(d)
-betas       <- rep(1/nworkers, nworkers)          # pSNEP
+betas       <- rep(1, nworkers)                  #rep(1/nworkers, nworkers)          # pSNEP
 epsilon     <- 0.01                               # learning rate
-pop         <- "stable"                      # Choose between "stable", "growing", or "contracting"
+pop         <- "contracting"                      # Choose between "stable", "growing", or "contracting"
 tol         <- 1e-6                               # Tolerance used to determined whether theta_posterior has converged
-maxiter     <- 200                                   
+maxiter     <- 300                                   
 # true values
 if (pop == "stable"){
   true_values <- c(10, 1, 1)
@@ -249,8 +255,11 @@ out <- snep(nworkers=nworkers,
             maxiter=maxiter
 )
 
-exp(natural2mean(out$server, d, TRUE)$mu)
-exp(natural2mean(out$server, d, TRUE)$Sigma)
+out_natural <- natural2mean(out$server, d, T)
+out_mu      <- exp(out_natural$mu + 0.5*matrix(diag(out_natural$Sigma)))
+out_sigma   <- diag(out_mu) %*% (exp(out_natural$Sigma) - 1) %*% diag(out_mu)
+out_mu
+out_sigma
 
 
 # Prepare data from worker 1
