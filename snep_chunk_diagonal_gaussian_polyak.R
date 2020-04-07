@@ -21,7 +21,7 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
   theta_posterior_history[1, ] <- theta_posterior
   # Find site workers
   chunken_sites <- function(x, n) split(x, cut(seq_along(x), n, labels = FALSE)) 
-  chunk_sites   <- chunken_sites(1:20, nworkers)
+  chunk_sites   <- chunken_sites(1:100, nworkers)
   # store thera posterior for polyak averaging
   tp_polyak         <- theta_posterior
   tp_polyak_history      <- matrix(0.0, nrow=(maxiter %/% nsync+1), ncol=(2*d))
@@ -244,11 +244,11 @@ nsync       <- 3                                 # Number of iterations after wh
 mu_prior    <- mu_local    <- matrix(rep(0, d))
 Sigma_prior <- Sigma_local <- diag(d)
 betas       <- rep(1, nworkers, nworkers)          #rep(1, nworkers)                  #rep(1/nworkers, nworkers)          # pSNEP
-epsilon     <- 0.05                               # learning rate
+epsilon     <- 0.1                               # learning rate
 pop         <- "growing"                      # Choose between "stable", "growing", or "contracting"
 tol         <- 1e-6                               # Tolerance used to determined whether theta_posterior has converged
-maxiter     <- 2000                         
-nsamples    <- 10
+maxiter     <- 200                         
+nsamples    <- 20
 digits      <- 4
 # true values
 if (pop == "stable"){
