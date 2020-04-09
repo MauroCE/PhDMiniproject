@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
-#include "myutil.h"
+#include "myutil_new.h"
 
 /* old_edit 28 May 1996 */
 /* last_edit 27 June 1996 (corrected isort and isorti bugs) */
