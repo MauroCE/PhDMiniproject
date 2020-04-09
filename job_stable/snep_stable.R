@@ -2,7 +2,7 @@
 library(MASS)
 # USING HIS SINTAX
 snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma_local, betas, loglike,
-                 epsilon, pop="stable", tol=1e-6, maxiter=1000)
+                 epsilon, pop="stable", tol=1e-6, maxiter=1000, nsamples=1, digits=2)
 {
   # Grab dimension of parameter space (usually 3)
   d       <- nrow(Sigma_prior)
@@ -21,11 +21,16 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
   theta_posterior_history[1, ] <- theta_posterior
   # Find site workers
   chunken_sites <- function(x, n) split(x, cut(seq_along(x), n, labels = FALSE)) 
-  chunk_sites   <- chunken_sites(1:20, nworkers)
+  chunk_sites   <- chunken_sites(1:100, nworkers)
   # store thera posterior for polyak averaging
   tp_polyak         <- theta_posterior
   tp_polyak_history      <- matrix(0.0, nrow=(maxiter %/% nsync+1), ncol=(2*d))
   tp_polyak_history[1, ] <- theta_posterior
+  # store also THETA POLYAK AVERAGE (THAT IS, WE KEEP A MOVING AVERAGE OF THE THETA POSTERIOR!)
+  theta_posterior_polyak <- theta_posterior
+  # Store also the history of theta_posterior_polyak (simple average of theta_posterior)
+  theta_posterior_polyak_history      <- matrix(0.0, nrow=(maxiter %/% nsync+1), ncol=(2*d))
+  theta_posterior_polyak_history[1, ] <- theta_posterior_polyak
   # Initialize Workers
   workers <- list()
   for (i in 1:nworkers){
@@ -50,8 +55,11 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
   iter     <- 1
   distance <- Inf
   # Debug
-  cat("Iteration: ", iter, " Theta_Update: ", iter %/% nsync, 
-      " Distance: ", distance, " Mu: ", to_exp(tp_polyak, d)$mu, "\n")
+  cat("Iter: ", iter, " Sync: ", iter %/% nsync, 
+      " Dist: ", format(distance, digits=digits), 
+      " Mu Polyak: ", format(to_exp(tp_polyak, d)$mu, digits=digits),
+      " Mu Post: ", format(to_exp(theta_posterior, d)$mu, digits=digits), 
+      " Mu Post Polyak: ", format(to_exp(theta_posterior_polyak, d)$mu, digits=digits), "\n")
   while (distance > tol){
     # INNER LOOP (WORKERS LEARN)
     for (j in 1:nworkers){
@@ -60,12 +68,19 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       log_tilted <- function(x){  # TODO: Check if I need to do c(x)
         return(as.double(tilted_param %*% s(x)) + loglike(j, workers[[j]]$sites, x, pop=pop) / workers[[j]]$beta)
       }
-      x_new <- rwmh(start=workers[[j]]$x, niter=2, logtarget=log_tilted)[2, ]
+      # Average multiple samples (drop=F required if nsamples=1)
+      samples    <- rwmh(start=workers[[j]]$x, niter=(nsamples+1), logtarget=log_tilted)[2:(nsamples+1), ,drop=F]
+      avg_suff_x <- rep(0, 2*d)
+      for (ii in 1:nsamples){
+        avg_suff_x <- avg_suff_x + s(samples[ii, ])
+      }
+      avg_suff_x <- avg_suff_x / nsamples
       # Update x for worker and history of x
-      workers[[j]]$x                   <- x_new
-      workers[[j]]$x_history[iter+1, ] <- x_new
+      workers[[j]]$x                   <- samples[nsamples, ]  # TODO: FOR NOW, KEEP FINAL STATE
+      workers[[j]]$x_history[iter+1, ] <- samples[nsamples, ]
       # Update natural and mean parameters
-      workers[[j]]$gamma  <- workers[[j]]$gamma + (iter^(-2/3))*(s(x_new) - moment(workers[[j]]$theta_c + workers[[j]]$lambda, d))
+      #workers[[j]]$gamma  <- workers[[j]]$gamma + (iter^(-2/3))*(avg_suff_x - moment(workers[[j]]$theta_c + workers[[j]]$lambda, d))
+      workers[[j]]$gamma  <- workers[[j]]$gamma + epsilon*(avg_suff_x - moment(workers[[j]]$theta_c + workers[[j]]$lambda, d))
       # use polyak averaging
       workers[[j]]$gamma_avg <- workers[[j]]$gamma_avg + (workers[[j]]$gamma - workers[[j]]$gamma_avg) / (iter + 1)
       workers[[j]]$lambda <- moment2natural(workers[[j]]$gamma, d)
@@ -93,6 +108,10 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       }
       # Update history of theta posterior
       theta_posterior_history[(iter %/% nsync)+1, ] <- theta_posterior
+      # update theta polyak average
+      theta_posterior_polyak <- theta_posterior_polyak + (theta_posterior - theta_posterior_polyak) / ((iter %/% nsync) + 1)
+      # update history of theta posterior polyak (simple average of theta posterior)
+      theta_posterior_polyak_history[(iter %/% nsync)+1, ] <- theta_posterior_polyak
       # Find new theta posterior from polyak averaging
       tp_polyak_new <- theta_0
       for (j in 1:nworkers) tp_polyak_new <- tp_polyak_new + moment2natural(workers[[j]]$gamma_avg, d)
@@ -102,8 +121,11 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       tp_polyak <- tp_polyak_new
       tp_polyak_history[(iter %/% nsync)+1, ] <- tp_polyak
       # Debug
-      cat("Iteration: ", iter, " Theta_Update: ", iter %/% nsync, 
-          " Distance: ", distance, " Mu: ", to_exp(tp_polyak, d)$mu, "\n")
+      cat("Iter: ", iter, " Sync: ", iter %/% nsync, 
+          " Dist: ", format(distance, digits=digits), 
+          " MuPol: ", format(to_exp(tp_polyak, d)$mu, digits=digits),
+          " MuPost: ", format(to_exp(theta_posterior, d)$mu, digits=digits), 
+          " MuPostPol: ", format(to_exp(theta_posterior_polyak, d)$mu, digits=digits), "\n")
     }
     iter <- iter + 1
     # Stop if reached maximum number of iterations
@@ -119,7 +141,10 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
     }
   }
   return(list(workers=workers, server=theta_posterior, 
-              theta_posterior_history=theta_posterior_history, tp_polyak_history=tp_polyak_history))
+              theta_posterior_history=theta_posterior_history, 
+              tp_polyak_history=tp_polyak_history,
+              theta_posterior_polyak=theta_posterior_polyak,
+              theta_posterior_polyak_history=theta_posterior_polyak_history))
 }
 # Function to take theta posterior and (or any natural parameter) and transform it into mean and variance covariance
 # martrix of phi
@@ -212,20 +237,25 @@ loglike <- function(worker_index, sites, params, isss=5000, pop="stable"){
 }
 
 
+loglike_MHAAR <- function(){}
+
+
 
 
 ### RUN EXAMPLE
 d           <- 3                                  # Number of parameters. Here 3 cause (logTheta, logR, logTf) 
 nworkers    <- 2                                  # Number of sites
-nouter      <- 10                                 # Number of iterations after which we update auxiliary parameter
-nsync       <- 10                                 # Number of iterations after which we communicate with the server
+nouter      <- 3                                 # Number of iterations after which we update auxiliary parameter
+nsync       <- 3                                 # Number of iterations after which we communicate with the server
 mu_prior    <- mu_local    <- matrix(rep(0, d))
 Sigma_prior <- Sigma_local <- diag(d)
 betas       <- rep(1, nworkers, nworkers)          #rep(1, nworkers)                  #rep(1/nworkers, nworkers)          # pSNEP
 epsilon     <- 0.05                               # learning rate
 pop         <- "stable"                      # Choose between "stable", "growing", or "contracting"
 tol         <- 1e-6                               # Tolerance used to determined whether theta_posterior has converged
-maxiter     <- 1000                         
+maxiter     <- 100                         
+nsamples    <- 20
+digits      <- 4
 # true values
 if (pop == "stable"){
   true_values <- c(10, 1, 1)
@@ -246,25 +276,29 @@ out <- snep(nworkers=nworkers,
             loglike=loglike,
             pop=pop,
             tol=tol,
-            maxiter=maxiter
+            maxiter=maxiter,
+            nsamples=nsamples,
+            digits=digits
 )
 
 
+# PRINT STUFF TO FILES
+write_to_file <- function(filename, data, pop=pop){
+	write(t(data), file=paste(filename, pop, sep=""), ncolumns=6)
+}
+write_to_file("polyak_history_", out$tp_polyak_history)
+write_to_file("tp_history_", out$theta_posterior_history)
+write_to_file("tp_history_avg_", out$theta_posterior_polyak_history)
+write_to_file("x_history_w1_", out$workers[[1]]$x_history)
+write_to_file("x_history_w2_", out$workers[[2]]$x_history)
+
+
 # write polyak posterior history
-write(t(out$tp_polyak_history), file=paste("polyak_history_", pop, sep=""), ncolumns=6)
+#write(t(out$tp_polyak_history), file=paste("polyak_history_", pop, sep=""), ncolumns=6)
 # write theta posterior history (not averaged)
-write(t(out$theta_posterior_history), file=paste("tp_history_", pop, sep=""), ncolumns=6)
+#write(t(out$theta_posterior_history), file=paste("tp_history_", pop, sep=""), ncolumns=6)
+# write theta posterior history averaged 
+#write(t(out$theta_posterior_polyak_history), file=paste("tp_history_avg_", pop, sep=""), ncolumns=6)
 # write trace of every worker (here we have only 2 workers, so only write first two)
-write(t(out$workers[[1]]$x_history), file=paste("x_history_w1_", pop, sep=""), ncolumns=3)
-write(t(out$workers[[2]]$x_history), file=paste("x_history_w2_", pop, sep=""), ncolumns=3)
-
-
-
-
-
-
-
-
-
-
-
+#write(t(out$workers[[1]]$x_history), file=paste("x_history_w1_", pop, sep=""), ncolumns=3)
+#write(t(out$workers[[2]]$x_history), file=paste("x_history_w2_", pop, sep=""), ncolumns=3)

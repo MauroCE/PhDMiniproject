@@ -6,7 +6,7 @@
 
 
 # Define working directory
-export WORK_DIR=$HOME/newjob/job
+export WORK_DIR=$HOME/newjob/job_stable
 
 # Define executable
 export EXE="/usr/bin/env Rscript snep_stable.R"
