@@ -2,7 +2,7 @@
 library(MASS)
 # USING HIS SINTAX
 snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma_local, betas, loglike,
-                 epsilon, pop="stable", tol=1e-6, maxiter=1000, nsamples=1, digits=2)
+                 epsilon, pop="stable", tol=1e-6, maxiter=1000, nsamples=1, digits=2, nfiles=100)
 {
   # Grab dimension of parameter space (usually 3)
   d       <- nrow(Sigma_prior)
@@ -21,7 +21,7 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
   theta_posterior_history[1, ] <- theta_posterior
   # Find site workers
   chunken_sites <- function(x, n) split(x, cut(seq_along(x), n, labels = FALSE)) 
-  chunk_sites   <- chunken_sites(1:100, nworkers)
+  chunk_sites   <- chunken_sites(1:nfiles, nworkers)
   # store thera posterior for polyak averaging
   tp_polyak         <- theta_posterior
   tp_polyak_history      <- matrix(0.0, nrow=(maxiter %/% nsync+1), ncol=(2*d))
@@ -37,18 +37,22 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
     # Store the starting x_i in the history of samples
     x_history      <- matrix(0.0, nrow=(maxiter+1), ncol=d)
     x_history[1, ] <- starts[i, ]
+    # store also the complete history. This contains all the samples determined by nsamples
+    x_history_full      <- matrix(0.0, nrow=(maxiter*nsamples + 1), ncol=d)
+    x_history_full[1, ] <- starts[i, ]
     # Store history of the local likelihood approximation lambda_i, averaged. 
-    workers[[i]]   <- list(x          = matrix(starts[i, ]),
-                           gamma      = gamma,
-                           gamma_avg  = gamma,
-                           lambda     = lambda,
-                           lambda_old = lambda,
-                           theta_p    = theta_p,
-                           beta       = betas[i],
-                           theta_c    = theta_c,
-                           delta      = rep(Inf, 2*d),              # Initialize the delta at Inf
-                           sites      = chunk_sites[[i]],             # Indeces of site chunks
-                           x_history  = x_history
+    workers[[i]]   <- list(x              = matrix(starts[i, ]),
+                           gamma          = gamma,
+                           gamma_avg      = gamma,
+                           lambda         = lambda,
+                           lambda_old     = lambda,
+                           theta_p        = theta_p,
+                           beta           = betas[i],
+                           theta_c        = theta_c,
+                           delta          = rep(Inf, 2*d),              # Initialize the delta at Inf
+                           sites          = chunk_sites[[i]],             # Indeces of site chunks
+                           x_history      = x_history,
+                           x_history_full = x_history_full
     )                
   }
   # Run workers SYNCHRONOUSLY
@@ -70,6 +74,9 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       }
       # Average multiple samples (drop=F required if nsamples=1)
       samples    <- rwmh(start=workers[[j]]$x, niter=(nsamples+1), logtarget=log_tilted)[2:(nsamples+1), ,drop=F]
+      # store all samples into the full history
+      workers[[j]]$x_history_full[(1+nsamples*(iter-1)):(nsamples*iter), ] <- samples
+      # compute monte carlo average of the sufficient statistics
       avg_suff_x <- rep(0, 2*d)
       for (ii in 1:nsamples){
         avg_suff_x <- avg_suff_x + s(samples[ii, ])
@@ -256,6 +263,7 @@ tol         <- 1e-6                               # Tolerance used to determined
 maxiter     <- 100                         
 nsamples    <- 20
 digits      <- 4
+nfiles      <- 100                         # number of gtree_files used. There's a total of 100, but can choose less for performance
 # true values
 if (pop == "stable"){
   true_values <- c(10, 1, 1)
@@ -278,12 +286,12 @@ out <- snep(nworkers=nworkers,
             tol=tol,
             maxiter=maxiter,
             nsamples=nsamples,
-            digits=digits
+            digits=digits,
+            nfiles=nfiles
 )
 
-
 # PRINT STUFF TO FILES
-write_to_file <- function(filename, data, pop=pop){
+write_to_file <- function(filename, data){
 	write(t(data), file=paste(filename, pop, sep=""), ncolumns=6)
 }
 write_to_file("polyak_history_", out$tp_polyak_history)
@@ -291,14 +299,6 @@ write_to_file("tp_history_", out$theta_posterior_history)
 write_to_file("tp_history_avg_", out$theta_posterior_polyak_history)
 write_to_file("x_history_w1_", out$workers[[1]]$x_history)
 write_to_file("x_history_w2_", out$workers[[2]]$x_history)
+write_to_file("x_history_full_w1_", out$workers[[1]]$x_history_full)
+write_to_file("x_history_full_w2_", out$workers[[1]]$x_history_full)
 
-
-# write polyak posterior history
-#write(t(out$tp_polyak_history), file=paste("polyak_history_", pop, sep=""), ncolumns=6)
-# write theta posterior history (not averaged)
-#write(t(out$theta_posterior_history), file=paste("tp_history_", pop, sep=""), ncolumns=6)
-# write theta posterior history averaged 
-#write(t(out$theta_posterior_polyak_history), file=paste("tp_history_avg_", pop, sep=""), ncolumns=6)
-# write trace of every worker (here we have only 2 workers, so only write first two)
-#write(t(out$workers[[1]]$x_history), file=paste("x_history_w1_", pop, sep=""), ncolumns=3)
-#write(t(out$workers[[2]]$x_history), file=paste("x_history_w2_", pop, sep=""), ncolumns=3)
