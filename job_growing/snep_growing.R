@@ -75,7 +75,7 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       # Average multiple samples (drop=F required if nsamples=1)
       samples    <- rwmh(start=workers[[j]]$x, niter=(nsamples+1), logtarget=log_tilted)[2:(nsamples+1), ,drop=F]
       # store all samples into the full history
-      workers[[j]]$x_history_full[(1+nsamples*(iter-1)):(nsamples*iter), ] <- samples
+      workers[[j]]$x_history_full[(2+nsamples*(iter-1)):(1+nsamples*iter), ] <- samples
       # compute monte carlo average of the sufficient statistics
       avg_suff_x <- rep(0, 2*d)
       for (ii in 1:nsamples){
@@ -260,7 +260,7 @@ betas       <- rep(1, nworkers, nworkers)          #rep(1, nworkers)            
 epsilon     <- 0.1                               # learning rate
 pop         <- "growing"                      # Choose between "stable", "growing", or "contracting"
 tol         <- 1e-6                               # Tolerance used to determined whether theta_posterior has converged
-maxiter     <- 100                         
+maxiter     <- 201                         
 nsamples    <- 20
 digits      <- 4
 nfiles      <- 100                         # number of gtree_files used. There's a total of 100, but can choose less for performance
@@ -291,14 +291,14 @@ out <- snep(nworkers=nworkers,
 )
 
 # PRINT STUFF TO FILES
-write_to_file <- function(filename, data){
-	write(t(data), file=paste(filename, pop, sep=""), ncolumns=6)
+write_to_file <- function(filename, data, ncols=6){
+	write(t(data), file=paste(filename, pop, sep=""), ncolumns=ncols)
 }
 write_to_file("polyak_history_", out$tp_polyak_history)
 write_to_file("tp_history_", out$theta_posterior_history)
 write_to_file("tp_history_avg_", out$theta_posterior_polyak_history)
-write_to_file("x_history_w1_", out$workers[[1]]$x_history)
-write_to_file("x_history_w2_", out$workers[[2]]$x_history)
-write_to_file("x_history_full_w1_", out$workers[[1]]$x_history_full)
-write_to_file("x_history_full_w2_", out$workers[[1]]$x_history_full)
+write_to_file("x_history_w1_", out$workers[[1]]$x_history, ncols=3)
+write_to_file("x_history_w2_", out$workers[[2]]$x_history, ncols=3)
+write_to_file("x_history_full_w1_", out$workers[[1]]$x_history_full, ncols=3)
+write_to_file("x_history_full_w2_", out$workers[[1]]$x_history_full, ncols=3)
 
