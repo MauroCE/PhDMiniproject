@@ -887,7 +887,7 @@ int mut_btw(struct node2 *p,struct node2 *q) {
 }
 
 void imp_weights(double theta,double tf,double rval,int c,struct elnd *en,int use_beta,double beta,
-									 double thetap, double tfp, double rvalp, double *log_imp1, double *log_imp2) {
+									 double thetap, double tfp, double rvalp, double *log_imp1, double *log_imp2, double **wa1_ptr) {
 	int n,n0,i,j,k,lbl;
 	double v,lambda;
 	// lambda and v depend on phi
@@ -912,6 +912,9 @@ void imp_weights(double theta,double tf,double rval,int c,struct elnd *en,int us
 		(l2[i]->m)--;																		//for coalescence
 		*log_imp1 += log(n0*(l2[i]->m)*lambda /((l2[i]->m+1)*((n-1)*lambda +theta)));
 		*log_imp2 += log(n0*(l2[i]->m)*lambdap/((l2[i]->m+1)*((n-1)*lambdap+theta)));
+		// change array value, then move pointer forward
+		**wa1_ptr = log(n0*(l2[i]->m)*lambda /((l2[i]->m+1)*((n-1)*lambda +theta)));
+		*wa1_ptr += 1;
 	}
 	else {
 		// ONLY ONE MUTATION
@@ -920,9 +923,17 @@ void imp_weights(double theta,double tf,double rval,int c,struct elnd *en,int us
 			(l2[i]->nb[1]->m)++;
 			(l2[i]->nb[1]->m_nb)--;
 			if (l2[i]->nb[1]->m==1){
-				*log_imp1 += log(n0*theta/(n*((n-1)*lambda+theta))); //for 1 mutation, evolution into a new state
+				*log_imp1 += log(n0*theta /(n*((n-1)*lambda +theta ))); //for 1 mutation, evolution into a new state
+				*log_imp2 += log(n0*thetap/(n*((n-1)*lambdap+thetap)));
+				// change array value, then move pointer forward
+				**wa1_ptr = log(n0*theta /(n*((n-1)*lambda +theta )));
+				*wa1_ptr  += 1;
 			}	else {
-				*log_imp2 += log(n0*(l2[i]->nb[1]->m)*theta/(n*((n-1)*lambda+theta))); //for 1 mutation, evolution into an already existing state
+				*log_imp1 += log(n0*(l2[i]->nb[1]->m)*theta /(n*((n-1)*lambda +theta ))); //for 1 mutation, evolution into an already existing state
+				*log_imp2 += log(n0*(l2[i]->nb[1]->m)*thetap/(n*((n-1)*lambdap+thetap)));
+				// change array value, then move pointer forward
+				**wa1_ptr = log(n0*(l2[i]->nb[1]->m)*theta /(n*((n-1)*lambda +theta )));
+				*wa1_ptr += 1;
 			}
 		}	else {
 			lbl=disrand(1,mut_btw(l2[i],l2[i]->nb[1]));				//when there are more mutations and you don'tknow their order, pick one randomly
@@ -939,6 +950,9 @@ void imp_weights(double theta,double tf,double rval,int c,struct elnd *en,int us
 						}
 						*log_imp1 += log(n0*theta /(n*((n-1)*lambda +theta )));
 						*log_imp2 += log(n0*thetap/(n*((n-1)*lambdap+thetap)));
+						// change array value, then move array forward
+						**wa1_ptr = log(n0*theta /(n*((n-1)*lambda +theta )));
+						*wa1_ptr += 1;
 					}
 				}
 			}
@@ -956,9 +970,14 @@ void prod(double theta,double tf,double rval,int use_beta, double beta, double t
 	en=(struct elnd*)calloc(sample_size+1,sizeof(struct elnd));
 	en=eligible_nodes(l2,en);
 	c_time=0.0;
+	// Store weights into arrays. wa stands for weights_array. 1 is for phi, 2 for phi_prime.
+	int n_factors = (en[0].nd-1) + n__sites;
+	double wa1[n_factors];
+	double *wa1_ptr = wa1;
+	int jjjj;
 	while(en[0].nd!=0) {
 		c_node=disrand(1,en[0].nd);
-		imp_weights(theta,tf,rval,c_node,en,use_beta,beta,thetap, tfp, rvalp, &log_imp1, &log_imp2);
+		imp_weights(theta,tf,rval,c_node,en,use_beta,beta,thetap, tfp, rvalp, &log_imp1, &log_imp2, &wa1_ptr);
 		free(en);
 		en=(struct elnd*)calloc(sample_size+1,sizeof(struct elnd));
 		en=eligible_nodes(l2,en);
