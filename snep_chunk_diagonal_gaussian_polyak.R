@@ -1,8 +1,9 @@
 # DIAGONAL GAUSSIAN CASE
 library(MASS)
+library(tidyverse)
 # USING HIS SINTAX
 snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma_local, betas, loglike,
-                 epsilon, pop="stable", tol=1e-6, maxiter=1000, nsamples=1, digits=2)
+                 epsilon, pop="stable", tol=1e-6, maxiter=1000, nsamples=1, digits=2, nfiles=100)
 {
   # Grab dimension of parameter space (usually 3)
   d       <- nrow(Sigma_prior)
@@ -21,31 +22,38 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
   theta_posterior_history[1, ] <- theta_posterior
   # Find site workers
   chunken_sites <- function(x, n) split(x, cut(seq_along(x), n, labels = FALSE)) 
-  chunk_sites   <- chunken_sites(1:100, nworkers)
+  chunk_sites   <- chunken_sites(1:nfiles, nworkers)
   # store thera posterior for polyak averaging
   tp_polyak         <- theta_posterior
   tp_polyak_history      <- matrix(0.0, nrow=(maxiter %/% nsync+1), ncol=(2*d))
   tp_polyak_history[1, ] <- theta_posterior
   # store also THETA POLYAK AVERAGE (THAT IS, WE KEEP A MOVING AVERAGE OF THE THETA POSTERIOR!)
   theta_posterior_polyak <- theta_posterior
+  # Store also the history of theta_posterior_polyak (simple average of theta_posterior)
+  theta_posterior_polyak_history      <- matrix(0.0, nrow=(maxiter %/% nsync+1), ncol=(2*d))
+  theta_posterior_polyak_history[1, ] <- theta_posterior_polyak
   # Initialize Workers
   workers <- list()
   for (i in 1:nworkers){
     # Store the starting x_i in the history of samples
     x_history      <- matrix(0.0, nrow=(maxiter+1), ncol=d)
     x_history[1, ] <- starts[i, ]
+    # store also the complete history. This contains all the samples determined by nsamples
+    x_history_full      <- matrix(0.0, nrow=(maxiter*nsamples + 1), ncol=d)
+    x_history_full[1, ] <- starts[i, ]
     # Store history of the local likelihood approximation lambda_i, averaged. 
-    workers[[i]]   <- list(x          = matrix(starts[i, ]),
-                           gamma      = gamma,
-                           gamma_avg  = gamma,
-                           lambda     = lambda,
-                           lambda_old = lambda,
-                           theta_p    = theta_p,
-                           beta       = betas[i],
-                           theta_c    = theta_c,
-                           delta      = rep(Inf, 2*d),              # Initialize the delta at Inf
-                           sites      = chunk_sites[[i]],             # Indeces of site chunks
-                           x_history  = x_history
+    workers[[i]]   <- list(x              = matrix(starts[i, ]),
+                           gamma          = gamma,
+                           gamma_avg      = gamma,
+                           lambda         = lambda,
+                           lambda_old     = lambda,
+                           theta_p        = theta_p,
+                           beta           = betas[i],
+                           theta_c        = theta_c,
+                           delta          = rep(Inf, 2*d),              # Initialize the delta at Inf
+                           sites          = chunk_sites[[i]],             # Indeces of site chunks
+                           x_history      = x_history,
+                           x_history_full = x_history_full
     )                
   }
   # Run workers SYNCHRONOUSLY
@@ -67,6 +75,9 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       }
       # Average multiple samples (drop=F required if nsamples=1)
       samples    <- rwmh(start=workers[[j]]$x, niter=(nsamples+1), logtarget=log_tilted)[2:(nsamples+1), ,drop=F]
+      # store all samples into the full history
+      workers[[j]]$x_history_full[(1+nsamples*(iter-1)):(nsamples*iter), ] <- samples
+      # compute monte carlo average of the sufficient statistics
       avg_suff_x <- rep(0, 2*d)
       for (ii in 1:nsamples){
         avg_suff_x <- avg_suff_x + s(samples[ii, ])
@@ -107,6 +118,8 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
       theta_posterior_history[(iter %/% nsync)+1, ] <- theta_posterior
       # update theta polyak average
       theta_posterior_polyak <- theta_posterior_polyak + (theta_posterior - theta_posterior_polyak) / ((iter %/% nsync) + 1)
+      # update history of theta posterior polyak (simple average of theta posterior)
+      theta_posterior_polyak_history[(iter %/% nsync)+1, ] <- theta_posterior_polyak
       # Find new theta posterior from polyak averaging
       tp_polyak_new <- theta_0
       for (j in 1:nworkers) tp_polyak_new <- tp_polyak_new + moment2natural(workers[[j]]$gamma_avg, d)
@@ -138,7 +151,8 @@ snep <- function(nworkers, nouter, nsync, mu_prior, Sigma_prior, mu_local, Sigma
   return(list(workers=workers, server=theta_posterior, 
               theta_posterior_history=theta_posterior_history, 
               tp_polyak_history=tp_polyak_history,
-              theta_posterior_polyak=theta_posterior_polyak))
+              theta_posterior_polyak=theta_posterior_polyak,
+              theta_posterior_polyak_history=theta_posterior_polyak_history))
 }
 # Function to take theta posterior and (or any natural parameter) and transform it into mean and variance covariance
 # martrix of phi
@@ -244,12 +258,13 @@ nsync       <- 3                                 # Number of iterations after wh
 mu_prior    <- mu_local    <- matrix(rep(0, d))
 Sigma_prior <- Sigma_local <- diag(d)
 betas       <- rep(1, nworkers, nworkers)          #rep(1, nworkers)                  #rep(1/nworkers, nworkers)          # pSNEP
-epsilon     <- 0.1                               # learning rate
-pop         <- "growing"                      # Choose between "stable", "growing", or "contracting"
+epsilon     <- 0.05                               # learning rate
+pop         <- "stable"                      # Choose between "stable", "growing", or "contracting"
 tol         <- 1e-6                               # Tolerance used to determined whether theta_posterior has converged
-maxiter     <- 200                         
-nsamples    <- 20
+maxiter     <- 50                         
+nsamples    <- 5
 digits      <- 4
+nfiles      <- 100                         # number of gtree_files used. There's a total of 100, but can choose less for performance
 # true values
 if (pop == "stable"){
   true_values <- c(10, 1, 1)
@@ -272,7 +287,8 @@ out <- snep(nworkers=nworkers,
             tol=tol,
             maxiter=maxiter,
             nsamples=nsamples,
-            digits=digits
+            digits=digits,
+            nfiles=nfiles
 )
 
 to_exp(out$server, d)
