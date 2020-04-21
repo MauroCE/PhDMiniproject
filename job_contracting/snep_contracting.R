@@ -300,5 +300,5 @@ write_to_file("tp_history_avg_", out$theta_posterior_polyak_history)
 write_to_file("x_history_w1_", out$workers[[1]]$x_history, ncols=3)
 write_to_file("x_history_w2_", out$workers[[2]]$x_history, ncols=3)
 write_to_file("x_history_full_w1_", out$workers[[1]]$x_history_full, ncols=3)
-write_to_file("x_history_full_w2_", out$workers[[1]]$x_history_full, ncols=3)
+write_to_file("x_history_full_w2_", out$workers[[2]]$x_history_full, ncols=3)
 
