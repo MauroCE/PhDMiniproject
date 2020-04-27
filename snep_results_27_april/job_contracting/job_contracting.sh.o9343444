@@ -1,0 +1,38 @@
+JOB ID: 9343444.master.cm.cluster
+Working Directory: /newhome/za19162/newjob/job_contracting
+Start Time: Sun Apr 26 11:28:57 BST 2020
+Iter:  1  Sync:  0  Dist:  Inf  Mu Polyak:  1.181 1.181 1.181  Mu Post:  1.181 1.181 1.181  Mu Post Polyak:  1.181 1.181 1.181 
+Iter:  3  Sync:  1  Dist:  0.612  MuPol:  1.186 1.123 1.189  MuPost:  1.196 1.063 1.213  MuPostPol:  1.188 1.130 1.197 
+Iter:  6  Sync:  2  Dist:  0.3954  MuPol:  1.203 1.061 1.223  MuPost:  1.2298 0.9548 1.2933  MuPostPol:  1.202 1.083 1.228 
+Iter:  9  Sync:  3  Dist:  0.2519  MuPol:  1.212 1.009 1.253  MuPost:  1.2377 0.8581 1.3402  MuPostPol:  1.211 1.036 1.256 
+Iter:  12  Sync:  4  Dist:  0.1581  MuPol:  1.2168 0.9615 1.2770  MuPost:  1.2290 0.7612 1.3696  MuPostPol:  1.2147 0.9862 1.2783 
+Iter:  15  Sync:  5  Dist:  0.1223  MuPol:  1.2155 0.9165 1.2982  MuPost:  1.2054 0.6594 1.4125  MuPostPol:  1.2131 0.9327 1.3009 
+Iter:  18  Sync:  6  Dist:  0.114  MuPol:  1.2149 0.8729 1.3210  MuPost:  1.2134 0.5529 1.4732  MuPostPol:  1.2131 0.8735 1.3259 
+Iter:  21  Sync:  7  Dist:  0.1143  MuPol:  1.2159 0.8304 1.3456  MuPost:  1.2258 0.4444 1.5384  MuPostPol:  1.2149 0.8068 1.3530 
+Iter:  24  Sync:  8  Dist:  0.1171  MuPol:  1.2180 0.7891 1.3713  MuPost:  1.2383 0.3384 1.6030  MuPostPol:  1.218 0.731 1.382 
+Iter:  27  Sync:  9  Dist:  0.1195  MuPol:  1.2194 0.7493 1.3976  MuPost:  1.2262 0.2415 1.6677  MuPostPol:  1.2187 0.6443 1.4114 
+Iter:  30  Sync:  10  Dist:  0.121  MuPol:  1.2194 0.7114 1.4238  MuPost:  1.2156 0.1643 1.7242  MuPostPol:  1.2184 0.5474 1.4416 
+Iter:  33  Sync:  11  Dist:  0.1226  MuPol:  1.2190 0.6758 1.4490  MuPost:  1.2129 0.1112 1.7716  MuPostPol:  1.2179 0.4455 1.4717 
+Iter:  36  Sync:  12  Dist:  0.1241  MuPol:  1.2187 0.6427 1.4733  MuPost:  1.21643 0.08125 1.82074  MuPostPol:  1.2177 0.3519 1.5017 
+Iter:  39  Sync:  13  Dist:  0.1253  MuPol:  1.2189 0.6124 1.4966  MuPost:  1.22384 0.06868 1.86266  MuPostPol:  1.2183 0.2807 1.5314 
+Iter:  42  Sync:  14  Dist:  0.1263  MuPol:  1.2194 0.5845 1.5191  MuPost:  1.23096 0.06202 1.90268  MuPostPol:  1.2194 0.2296 1.5608 
+Iter:  45  Sync:  15  Dist:  0.1275  MuPol:  1.2205 0.5589 1.5407  MuPost:  1.2467 0.0588 1.9438  MuPostPol:  1.2216 0.1937 1.5901 
+Iter:  48  Sync:  16  Dist:  0.1286  MuPol:  1.2223 0.5355 1.5614  MuPost:  1.26892 0.05769 1.97036  MuPostPol:  1.2254 0.1685 1.6184 
+Iter:  51  Sync:  17  Dist:  0.1292  MuPol:  1.2249 0.5142 1.5807  MuPost:  1.28420 0.05729 1.99248  MuPostPol:  1.2300 0.1503 1.6455 
+Iter:  54  Sync:  18  Dist:  0.1278  MuPol:  1.2269 0.4948 1.5984  MuPost:  1.26772 0.06701 1.98775  MuPostPol:  1.2327 0.1405 1.6697 
+Iter:  57  Sync:  19  Dist:  0.1261  MuPol:  1.228 0.477 1.615  MuPost:  1.2492 0.0744 2.0116  MuPostPol:  1.2339 0.1343 1.6932 
+Iter:  60  Sync:  20  Dist:  0.1255  MuPol:  1.2290 0.4607 1.6304  MuPost:  1.25359 0.07926 2.00986  MuPostPol:  1.2352 0.1299 1.7147 
+Iter:  63  Sync:  21  Dist:  0.1253  MuPol:  1.2301 0.4455 1.6444  MuPost:  1.25438 0.08371 2.00498  MuPostPol:  1.2365 0.1266 1.7341 
+Iter:  66  Sync:  22  Dist:  0.1253  MuPol:  1.2311 0.4314 1.6572  MuPost:  1.25480 0.08567 1.99951  MuPostPol:  1.238 0.124 1.752 
+Iter:  69  Sync:  23  Dist:  0.1256  MuPol:  1.2320 0.4182 1.6689  MuPost:  1.25485 0.08629 1.99346  MuPostPol:  1.2387 0.1217 1.7676 
+Iter:  72  Sync:  24  Dist:  0.126  MuPol:  1.2330 0.4058 1.6794  MuPost:  1.25803 0.08633 1.97349  MuPostPol:  1.2399 0.1197 1.7810 
+Iter:  75  Sync:  25  Dist:  0.1257  MuPol:  1.2339 0.3941 1.6884  MuPost:  1.25432 0.08637 1.94088  MuPostPol:  1.2407 0.1178 1.7913 
+Iter:  78  Sync:  26  Dist:  0.1254  MuPol:  1.2346 0.3832 1.6960  MuPost:  1.25065 0.08534 1.91485  MuPostPol:  1.2413 0.1161 1.7992 
+Iter:  81  Sync:  27  Dist:  0.1257  MuPol:  1.2352 0.3728 1.7029  MuPost:  1.24597 0.07803 1.91864  MuPostPol:  1.2416 0.1139 1.8068 
+Iter:  84  Sync:  28  Dist:  0.1262  MuPol:  1.2355 0.3629 1.7094  MuPost:  1.24152 0.07341 1.92375  MuPostPol:  1.2416 0.1114 1.8141 
+Iter:  87  Sync:  29  Dist:  0.1266  MuPol:  1.2357 0.3534 1.7155  MuPost:  1.23425 0.06745 1.94477  MuPostPol:  1.2412 0.1085 1.8221 
+Iter:  90  Sync:  30  Dist:  0.1271  MuPol:  1.2356 0.3443 1.7219  MuPost:  1.22391 0.06071 1.98326  MuPostPol:  1.240 0.105 1.832 
+Iter:  93  Sync:  31  Dist:  0.1275  MuPol:  1.2352 0.3356 1.7285  MuPost:  1.2085 0.0573 2.0212  MuPostPol:  1.2384 0.1013 1.8430 
+Iter:  96  Sync:  32  Dist:  0.1279  MuPol:  1.2342 0.3273 1.7353  MuPost:  1.18687 0.05595 2.05910  MuPostPol:  1.23538 0.09782 1.85585 
+Iter:  99  Sync:  33  Dist:  0.1283  MuPol:  1.2326 0.3195 1.7420  MuPost:  1.16657 0.05512 2.09611  MuPostPol:  1.23138 0.09462 1.87028 
+Max Iteration Reached. Distance is:  0.1282736End Time: Mon Apr 27 21:04:20 BST 2020
