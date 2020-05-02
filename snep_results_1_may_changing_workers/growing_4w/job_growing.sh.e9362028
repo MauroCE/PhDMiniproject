@@ -1,0 +1,10 @@
+Error in if (log_u[i] <= p_candidate - pz) { : 
+  missing value where TRUE/FALSE needed
+Calls: snep -> rwmh
+In addition: Warning messages:
+1: In sqrt(new$sigmas) : NaNs produced
+2: In sqrt(1/old$sigmas) : NaNs produced
+3: In sqrt(new$sigmas) : NaNs produced
+4: In sqrt(new$sigmas) : NaNs produced
+Execution halted
+Warning: Permanently added 'node33-036,10.131.0.132' (RSA) to the list of known hosts.
