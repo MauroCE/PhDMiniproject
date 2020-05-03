@@ -1,0 +1,5 @@
+Error in chol.default(matrix) : 
+  the leading minor of order 3 is not positive definite
+Calls: snep ... natural -> matrix_inverse -> chol2inv -> chol -> chol.default
+Execution halted
+Warning: Permanently added 'node32-032,10.131.0.176' (RSA) to the list of known hosts.
